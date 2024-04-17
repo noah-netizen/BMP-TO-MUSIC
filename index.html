@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>BMP to Music Converter</title>
+  </head>
+  <body>
+    <input type="file" id="fileInput">
+    <button onclick="convertBmpToMusic()">Convert BMP to Music</button>
+    <canvas id="visualizer"></canvas>
+
+    <script>
+      function extractHexCodes(binaryData) {
+  // Convert the binary data to a Uint8Array
+  const bytes = new Uint8Array(binaryData.length);
+  for (let i = 0; i < binaryData.length; i++) {
+    bytes[i] = binaryData.charCodeAt(i);
+  }
+
+  // Extract the relevant hex codes from the header
+  const fileSize = bytes[2].toString(16).padStart(2, '0') + bytes[3].toString(16).padStart(2, '0');
+  const width = bytes[18].toString(16).padStart(2, '0') + bytes[19].toString(16).padStart(2, '0');
+  const height = bytes[22].toString(16).padStart(2, '0') + bytes[23].toString(16).padStart(2, '0');
+        
+  console.log('Extracted hex codes:', {fileSize, width, height});
+
+  return {
+    fileSize: fileSize,
+    width: width,
+    height: height
+  };
+}
+
+function convertHexToMusicalParams(hexCodes) {
+  // Oscillator Type
+  let oscillatorType;
+  const fileSize = parseInt(hexCodes.fileSize, 16);
+  if (fileSize <= 0x7A120) {
+    oscillatorType = 'sine';
+  } else if (fileSize <= 0x200000) {
+    oscillatorType = 'square';
+  } else if (fileSize <= 0x9FFFFF) {
+    oscillatorType = 'triangle';
+  } else {
+    oscillatorType = 'sawtooth';
+  }
+
+  // Reverb and Delay
+  let reverb, delay;
+  const width = parseInt(hexCodes.width, 16);
+  if (width <= 0x3C0) {
+    reverb = 1;
+    delay = 0.1;
+  } else if (width <= 0x780) {
+    reverb = 2;
+    delay = 0.3;
+  } else if (width <= 0xB40) {
+    reverb = 3;
+    delay = 0.5;
+  } else {
+    reverb = 4;
+    delay = 0.7;
+  }
+
+  // Tempo and Decay
+  let tempo, decay;
+  const height = parseInt(hexCodes.height, 16);
+  if (height <= 0x21C) {
+    tempo = 60;
+    decay = 0.1;
+  } else if (height <= 0x438) {
+    tempo = 105;
+    decay = 0.5;
+  } else if (height <= 0x654) {
+    tempo = 135;
+    decay = 1;
+  } else {
+    tempo = 165;
+    decay = 2;
+  }
+
+  return {
+    oscillatorType,
+    reverb,
+    delay,
+    tempo,
+    decay,
+  };
+}
+
+function mapColorToNote(colorValue, scale) {
+    const colorDecimal = parseInt(colorValue, 16);
+    let frequency = 0; // Initialize to a valid number
+
+    if (scale === 'C') {
+        const notePosition = Math.round(8 * (colorDecimal / 255));
+        frequency = 261.63 * Math.pow(2, (notePosition - 1) / 8); // C1 to C8
+    } else if (scale === 'E') {
+        const notePosition = Math.round(8 * (colorDecimal / 255));
+        frequency = 329.63 * Math.pow(2, (notePosition - 1) / 8); // E1 to E8
+    } else if (scale === 'G') {
+        const notePosition = Math.round(8 * (colorDecimal / 255));
+        frequency = 392.00 * Math.pow(2, (notePosition - 1) / 8); // G1 to G8
+    }
+
+    if (!isFinite(frequency) || frequency <= 0) {
+        console.error('Invalid frequency:', frequency, 'for color value:', colorValue, 'and scale:', scale);
+        frequency = 261.63; // Default to a standard C note if invalid
+    }
+
+    return frequency;
+}
+
+function getNotesFromPixelData(binaryData, width, height) {
+  const notes = [];
+
+  // Loop through the pixel data and extract the notes
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const index = (y * width + x) * 3 + 54; // 54 is the header size
+      const blue = binaryData.charCodeAt(index);
+      const green = binaryData.charCodeAt(index + 1);
+      const red = binaryData.charCodeAt(index + 2);
+
+      // Map the RGB values to notes based on the provided notation
+      const blueNote = mapColorToNote(blue, 'G');
+      const greenNote = mapColorToNote(green, 'E');
+      const redNote = mapColorToNote(red, 'C');
+
+      notes.push(blueNote, greenNote, redNote);
+    }
+  }
+
+  return notes;
+}
+
+function generateAudio(musicalParams, binaryData, width, height) {
+    const audioContext = new AudioContext();
+
+    // Create the reverb node
+    const reverbNode = audioContext.createConvolver();
+    reverbNode.normalize = true;
+
+    // Create the delay node
+    const delayNode = audioContext.createDelay();
+    delayNode.delayTime.value = musicalParams.delay;
+
+    // Create the gain node for the decay
+    const decayNode = audioContext.createGain();
+    decayNode.gain.value = musicalParams.decay;
+
+    // Connect the nodes
+    reverbNode.connect(delayNode);
+    delayNode.connect(decayNode);
+    decayNode.connect(audioContext.destination);
+
+    // Get the notes from the pixel data
+    const notes = getNotesFromPixelData(binaryData, width, height);
+
+    // Play the notes
+    let currentTime = audioContext.currentTime;
+    notes.forEach(note => {
+        const oscillator = audioContext.createOscillator();
+        oscillator.type = musicalParams.oscillatorType;
+
+        // Ensure the note is valid before playing
+        if (isFinite(note) && note > 0) {
+            oscillator.frequency.value = note;
+        } else {
+            console.error('Skipped invalid note:', note);
+            return; // Skip this iteration
+        }
+
+        oscillator.connect(reverbNode);
+        oscillator.start(currentTime);
+        oscillator.stop(currentTime + musicalParams.decay);
+        currentTime += 60 / musicalParams.tempo;  // Schedule the next note
+    });
+}
+
+function visualizeBmpImage(binaryData) {
+  const canvas = document.getElementById('visualizer');
+  const ctx = canvas.getContext('2d');
+
+  // Convert the binary data to an ImageData object
+  const bytes = new Uint8Array(binaryData.length);
+  for (let i = 0; i < binaryData.length; i++) {
+    bytes[i] = binaryData.charCodeAt(i);
+  }
+  const imageData = new ImageData(bytes, 54);
+
+  // Get the image dimensions from the extracted hex codes
+  const hexCodes = extractHexCodes(binaryData);
+  canvas.width = parseInt(hexCodes.width, 16);
+  canvas.height = parseInt(hexCodes.height, 16);
+
+  // Draw the image on the canvas
+  ctx.putImageData(imageData, 0, 0);
+}
+
+function convertBmpToMusic() {
+  const fileInput = document.getElementById('fileInput');
+  const file = fileInput.files[0];
+
+  if (file && file.type === 'image/bmp') {
+    const reader = new FileReader();
+    reader.onload = function(event) {
+      const binaryData = event.target.result;
+      const hexCodes = extractHexCodes(binaryData);
+      const musicalParams = convertHexToMusicalParams(hexCodes);
+      const width = parseInt(hexCodes.width, 16);
+      const height = parseInt(hexCodes.height, 16);
+      generateAudio(musicalParams, binaryData, width, height);
+      visualizeBmpImage(binaryData);
+    };
+    reader.readAsBinaryString(file);
+  } else {
+    console.error('Please select a BMP file.');
+  }
+}
+    </script>
+  </body>
+</html>
