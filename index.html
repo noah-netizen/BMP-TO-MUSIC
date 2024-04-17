@@ -10,13 +10,12 @@
 
     <script>
       function extractHexCodes(binaryData) {
-  // Convert the binary data to a Uint8Array
+        
   const bytes = new Uint8Array(binaryData.length);
   for (let i = 0; i < binaryData.length; i++) {
     bytes[i] = binaryData.charCodeAt(i);
   }
 
-  // Extract the relevant hex codes from the header
   const fileSize = bytes[2].toString(16).padStart(2, '0') + bytes[3].toString(16).padStart(2, '0');
   const width = bytes[18].toString(16).padStart(2, '0') + bytes[19].toString(16).padStart(2, '0');
   const height = bytes[22].toString(16).padStart(2, '0') + bytes[23].toString(16).padStart(2, '0');
@@ -89,7 +88,7 @@ function convertHexToMusicalParams(hexCodes) {
 
 function mapColorToNote(colorValue, scale) {
     const colorDecimal = parseInt(colorValue, 16);
-    let frequency = 0; // Initialize to a valid number
+    let frequency = 0;
 
     if (scale === 'C') {
         const notePosition = Math.round(8 * (colorDecimal / 255));
@@ -104,7 +103,7 @@ function mapColorToNote(colorValue, scale) {
 
     if (!isFinite(frequency) || frequency <= 0) {
         console.error('Invalid frequency:', frequency, 'for color value:', colorValue, 'and scale:', scale);
-        frequency = 261.63; // Default to a standard C note if invalid
+        frequency = 261.63;
     }
 
     return frequency;
@@ -113,7 +112,6 @@ function mapColorToNote(colorValue, scale) {
 function getNotesFromPixelData(binaryData, width, height) {
   const notes = [];
 
-  // Loop through the pixel data and extract the notes
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
       const index = (y * width + x) * 3 + 54; // 54 is the header size
@@ -121,7 +119,6 @@ function getNotesFromPixelData(binaryData, width, height) {
       const green = binaryData.charCodeAt(index + 1);
       const red = binaryData.charCodeAt(index + 2);
 
-      // Map the RGB values to notes based on the provided notation
       const blueNote = mapColorToNote(blue, 'G');
       const greenNote = mapColorToNote(green, 'E');
       const redNote = mapColorToNote(red, 'C');
@@ -136,24 +133,19 @@ function getNotesFromPixelData(binaryData, width, height) {
 function generateAudio(musicalParams, binaryData, width, height) {
     const audioContext = new AudioContext();
 
-    // Create the reverb node
     const reverbNode = audioContext.createConvolver();
     reverbNode.normalize = true;
 
-    // Create the delay node
     const delayNode = audioContext.createDelay();
     delayNode.delayTime.value = musicalParams.delay;
-
-    // Create the gain node for the decay
+  
     const decayNode = audioContext.createGain();
     decayNode.gain.value = musicalParams.decay;
 
-    // Connect the nodes
     reverbNode.connect(delayNode);
     delayNode.connect(decayNode);
     decayNode.connect(audioContext.destination);
 
-    // Get the notes from the pixel data
     const notes = getNotesFromPixelData(binaryData, width, height);
 
     // Play the notes
@@ -162,18 +154,17 @@ function generateAudio(musicalParams, binaryData, width, height) {
         const oscillator = audioContext.createOscillator();
         oscillator.type = musicalParams.oscillatorType;
 
-        // Ensure the note is valid before playing
         if (isFinite(note) && note > 0) {
             oscillator.frequency.value = note;
         } else {
             console.error('Skipped invalid note:', note);
-            return; // Skip this iteration
+            return;
         }
 
         oscillator.connect(reverbNode);
         oscillator.start(currentTime);
         oscillator.stop(currentTime + musicalParams.decay);
-        currentTime += 60 / musicalParams.tempo;  // Schedule the next note
+        currentTime += 60 / musicalParams.tempo;
     });
 }
 
@@ -181,19 +172,16 @@ function visualizeBmpImage(binaryData) {
   const canvas = document.getElementById('visualizer');
   const ctx = canvas.getContext('2d');
 
-  // Convert the binary data to an ImageData object
   const bytes = new Uint8Array(binaryData.length);
   for (let i = 0; i < binaryData.length; i++) {
     bytes[i] = binaryData.charCodeAt(i);
   }
   const imageData = new ImageData(bytes, 54);
 
-  // Get the image dimensions from the extracted hex codes
   const hexCodes = extractHexCodes(binaryData);
   canvas.width = parseInt(hexCodes.width, 16);
   canvas.height = parseInt(hexCodes.height, 16);
 
-  // Draw the image on the canvas
   ctx.putImageData(imageData, 0, 0);
 }
 
